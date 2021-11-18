@@ -4,20 +4,15 @@
 
 import json
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Any, Iterable, List, Mapping, MutableMapping, Optional, Tuple, Union
+from typing import Any, Iterable, List, Mapping, MutableMapping, Optional, Union
 
 import pendulum
 import requests
 from airbyte_cdk.models import SyncMode
 from airbyte_cdk.sources.streams.http import HttpStream
 from pendulum.datetime import DateTime
-
-
-@dataclass
-class StreamSlice:
-    start_date: DateTime
-    end_date: DateTime
+from requests.exceptions import ChunkedEncodingError
+from source_iterable.slice_generators import AdjustableSliceGenerator, RangeSliceGenerator, StreamSlice
 
 
 class IterableStream(HttpStream, ABC):
@@ -101,14 +96,25 @@ class IterableExportStream(IterableStream, ABC):
             raise ValueError(f"Unsupported type of datetime field {type(value)}")
         return value
 
-    def get_updated_state(self, current_stream_state: MutableMapping[str, Any], latest_record: Mapping[str, Any]) -> Mapping[str, Any]:
+    def get_updated_state(
+        self,
+        current_stream_state: MutableMapping[str, Any],
+        latest_record: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
         """
         Return the latest state by comparing the cursor value in the latest record with the stream's most recent state object
         and returning an updated state object.
         """
         latest_benchmark = latest_record[self.cursor_field]
         if current_stream_state.get(self.cursor_field):
-            return {self.cursor_field: str(max(latest_benchmark, self._field_to_datetime(current_stream_state[self.cursor_field])))}
+            return {
+                self.cursor_field: str(
+                    max(
+                        latest_benchmark,
+                        self._field_to_datetime(current_stream_state[self.cursor_field]),
+                    )
+                )
+            }
         return {self.cursor_field: str(latest_benchmark)}
 
     def request_params(
@@ -157,7 +163,10 @@ class IterableExportStream(IterableStream, ABC):
         return start_datetime
 
     def stream_slices(
-        self, sync_mode: SyncMode, cursor_field: List[str] = None, stream_state: Mapping[str, Any] = None
+        self,
+        sync_mode: SyncMode,
+        cursor_field: List[str] = None,
+        stream_state: Mapping[str, Any] = None,
     ) -> Iterable[Optional[StreamSlice]]:
 
         start_datetime = self.get_start_date(stream_state)
@@ -165,41 +174,53 @@ class IterableExportStream(IterableStream, ABC):
 
 
 class IterableExportStreamRanged(IterableExportStream):
-
-    RANGE_LENGTH_DAYS = 90
-
-    @staticmethod
-    def make_datetime_ranges(start: DateTime, end: DateTime, range_days: int) -> Iterable[Tuple[DateTime, DateTime]]:
-        """
-        Generates list of ranges starting from start up to end date with duration of ranges_days.
-        Args:
-            start (DateTime): start of the range
-            end (DateTime): end of the range
-            range_days (int): Number in days to split subranges into.
-
-        Returns:
-            List[Tuple[DateTime, DateTime]]: list of tuples with ranges.
-
-            Each tuple contains two daytime variables: first is period start
-            and second is period end.
-        """
-        if start > end:
-            return []
-
-        next_start = start
-        period = pendulum.Duration(days=range_days)
-        while next_start < end:
-            next_end = min(next_start + period, end)
-            yield next_start, next_end
-            next_start = next_end
-
     def stream_slices(
-        self, sync_mode: SyncMode, cursor_field: List[str] = None, stream_state: Mapping[str, Any] = None
+        self,
+        sync_mode: SyncMode,
+        cursor_field: List[str] = None,
+        stream_state: Mapping[str, Any] = None,
     ) -> Iterable[Optional[StreamSlice]]:
 
         start_datetime = self.get_start_date(stream_state)
 
-        return (
-            StreamSlice(start_date=start, end_date=end)
-            for start, end in self.make_datetime_ranges(start_datetime, pendulum.now("UTC"), self.RANGE_LENGTH_DAYS)
-        )
+        return RangeSliceGenerator(start_datetime)
+
+
+class IterableExportStreamAdjustableRange(IterableExportStream):
+    _adjustable_generator: AdjustableSliceGenerator = None
+
+    def stream_slices(
+        self,
+        sync_mode: SyncMode,
+        cursor_field: List[str] = None,
+        stream_state: Mapping[str, Any] = None,
+    ) -> Iterable[Optional[StreamSlice]]:
+
+        start_datetime = self.get_start_date(stream_state)
+        self._adjustable_generator = AdjustableSliceGenerator(start_datetime)
+        return self._adjustable_generator
+
+    def read_records(
+        self,
+        sync_mode: SyncMode,
+        cursor_field: List[str],
+        stream_slice: StreamSlice,
+        stream_state: Mapping[str, Any] = None,
+    ) -> Iterable[Mapping[str, Any]]:
+        start_time = pendulum.now()
+        print(f"slice is ::: {stream_slice}")
+        try:
+            for _ in range(3):
+                for record in super().read_records(
+                    sync_mode=sync_mode,
+                    cursor_field=cursor_field,
+                    stream_slice=stream_slice,
+                    stream_state=stream_state,
+                ):
+                    now = pendulum.now()
+                    self._adjustable_generator.adjust_range(now - start_time)
+                    yield record
+                    start_time = now
+                break
+        except ChunkedEncodingError:
+            stream_slice = self._adjustable_generator.reduce_range()
