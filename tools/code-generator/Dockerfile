@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.9-slim
 RUN pip install datamodel-code-generator==0.10.1
 ENTRYPOINT ["datamodel-codegen"]
 
