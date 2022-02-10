@@ -1,0 +1,9 @@
+plugins {
+    id 'airbyte-python'
+    id 'airbyte-docker'
+    id 'airbyte-destination-acceptance-test'
+}
+
+airbytePython {
+    moduleDirectory 'destination_smartsheets'
+}

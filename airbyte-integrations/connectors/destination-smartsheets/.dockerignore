@@ -1,0 +1,7 @@
+*
+!Dockerfile
+!Dockerfile.test
+!main.py
+!destination_smartsheets
+!setup.py
+!secrets
