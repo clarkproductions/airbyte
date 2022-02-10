@@ -3,5 +3,5 @@
 !Dockerfile.test
 !main.py
 !destination_smartsheets
-!setup.pypyth
+!setup.py
 !secrets
