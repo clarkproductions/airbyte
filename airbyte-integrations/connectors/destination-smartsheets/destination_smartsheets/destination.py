@@ -21,7 +21,7 @@ from airbyte_cdk.models import (
 )
 
 
-class destinationSmartsheets(destination):
+class destinationSmartsheets(Destination):
     def write(
         self, config: Mapping[str, Any], configured_catalog: ConfiguredAirbyteCatalog, input_messages: Iterable[AirbyteMessage]
     ) -> Iterable[AirbyteMessage]:
@@ -48,6 +48,8 @@ class destinationSmartsheets(destination):
         try:
             access_token = config["access_token"]
             spreadsheet_id = config["spreadsheet_id"]
+            ss_debug_logging = config["smartsheets_debug_logging"]
+            ss_debug_logging_row_limit = config["smartsheets_debug_logging_row_limit"]
 
             smartsheet_client = smartsheet.Smartsheet(access_token)
             smartsheet_client.errors_as_exceptions(True)
